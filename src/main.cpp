@@ -38,7 +38,6 @@ static string devfile = "/dev/video0";
 
 static void usr1_handler(int sig)
 {
-	lock_guard<mutex> lk(mkey);
 	cerr << "SIGUSR1 received: " << sig << endl;
 	nextone = true;
 	notif.notify_one();
@@ -46,7 +45,6 @@ static void usr1_handler(int sig)
 
 static void hold_handler(int sig)
 {
-	lock_guard<mutex> lk(mkey);
 	cerr << "SIGCHLD received: " << sig << endl;
 	paused = true;
 	nextone = false;
@@ -55,7 +53,6 @@ static void hold_handler(int sig)
 
 static void cont_handler(int sig)
 {
-	lock_guard<mutex> lk(mkey);
 	cerr << "SIGCONT received: " << sig << endl;
 	paused = false;
 	notif.notify_one();
@@ -63,7 +60,6 @@ static void cont_handler(int sig)
 
 static void int_handler(int sig)
 {
-	lock_guard<mutex> lk(mkey);
 	cerr << "SIGINT received: " << sig << endl;
 	running = false;
 	notif.notify_one();
@@ -192,7 +188,6 @@ static void loop()
 		
 		while(running)
 		{
-			lock_guard<mutex> lk(mkey);
 			if(nextframe() || (paused && !nextone))
 			{
 				break;
