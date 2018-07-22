@@ -107,6 +107,11 @@ static void loop()
 			fprintf(stdout, "\x01%d\n", buf.length);
 			fwrite(b, 1, buf.length, stdout);
 			
+			if(munmap(buffers[buf.index].start, buffers[buf.index].length) == -1)
+			{
+				errno_exit("munmap");
+			}
+			
 			if(do_ioctl(fd, VIDIOC_QBUF, &buf) == -1)
 			{
 				errno_exit("VIDIOC_QBUF");
