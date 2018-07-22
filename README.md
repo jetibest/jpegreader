@@ -10,11 +10,19 @@ to separate the JPEG frames without any significant CPU usage.
 
 Example usage:
 
-    jpegreader -s 1920x1080 -i /dev/video0 | use_jpeg_frames
+    jpegreader -h -s 1280x720 -i /dev/video1 | use_jpeg_frames
 
 The standard output contains a continuous stream of packets like:
 
     \x01<frame-length>\nJPEG_FRAMEDATA\x01<frame-length>\nJPEG_FRAMEDATA...
+
+Options:
+
+    --header,-h           Embed \x01<frame-length>\n header. Default behavior
+                          prints frame lengths in stderr after frame is flushed
+                          to stdout.
+    --resolution,-r,-s    Set custom resolution. Default is 1920x1080.
+    --device,-d,-i        Set custom V4L2 input device. Default is /dev/video0.
 
 To parse individual JPEG frames is very simple:
   - Find the SOH-marker (Start of Heading: \x01, ^A)
@@ -66,7 +74,7 @@ Note that jpegreader uses /dev/video0 by default.
         }
     }
     EOF
-    jpegreader | perl "$tmp"
+    jpegreader --header | perl "$tmp"
     rm -f "$tmp"
 
 # NodeJS example
@@ -155,7 +163,7 @@ Note that jpegreader uses /dev/video0 by default.
         };
     })();
     
-    var reader = require('child_process').spawn('jpegreader');
+    var reader = require('child_process').spawn('jpegreader', ['--header']);
     reader.stdout.setEncoding('binary');
     reader.stdout.on('readable', readframe);
     reader.on('exit', function(code)
@@ -164,7 +172,56 @@ Note that jpegreader uses /dev/video0 by default.
     });
     EOF
 
-If we would like to grab frame by frame, we could add the following Javascript code to the above example:
+If we would like to grab frame by frame, we could use the following code instead. This version uses the stderr output from jpegreader to grab frames. This is the recommended method, use this whenever you have access to two separate streams.
+
+    var frameno = 0;
+    var queue = [];
+    var tryreadframe = function()
+    {
+        while(queue.length)
+        {
+            var frame = reader.stdout.read(queue[0]);
+            if(frame)
+            {
+                queue.shift();
+
+                if(frame[0] == '\xff' && frame[1] == '\xd8')
+                {
+                    console.log('jpeg frame read: ' + frame.length);
+                    require('fs').writeFileSync('frame.' + frameno + '.jpg', frame, {encoding: 'binary'});
+                    console.log('jpeg file written: frame.' + frameno + '.jpg');
+                    ++frameno;
+                }
+                else
+                {
+                    console.log('corrupted data read: ' + frame.length);
+                }
+            }
+            else
+            {
+                console.log('frame missed, ' + queue[0] + ' not available in stdout');
+                return;
+            }
+        }
+    };
+
+    var reader = require('child_process').spawn('jpegreader');
+    reader.stdout.setEncoding('binary');
+    reader.stdout.on('readable', tryreadframe);
+    reader.stderr.on('data', function(buf)
+    {
+        var length = parseInt(buf+'');
+        if(length)
+        {
+            queue.push(length);
+            tryreadframe();
+        }
+    });
+    reader.on('exit', function(code)
+    {
+        console.log('jpegreader exited with code: ' + code);
+        process.exit(1);
+    });
 
     reader.kill('SIGCHLD');
     console.log('jpegreader is currently paused, use commands: next, play, pause');
