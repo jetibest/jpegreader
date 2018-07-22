@@ -36,8 +36,8 @@ Note that jpegreader uses /dev/video0 by default.
     tmp="$(mktemp)"
     cat >"$tmp" <<'EOF'
     #!/usr/bin/perl
-    $fn=4;
-    $fi=0;
+    $fn = 4;
+    $fi = 0;
     while($char = getc)
     {
         if($char == "\x01")
@@ -47,17 +47,21 @@ Note that jpegreader uses /dev/video0 by default.
             {
                 if($char == "\n")
                 {
-                    open($fh, '>:raw', "frame.$fi.jpg") or die "write error";
-                    print $fh read(STDIN, $buffer, $count);
-                    close $fh;
-                    print "frame.$fi.jpg\n";
+                    $result = read(STDIN, $buffer, $count);
+                    if($result == $count)
+                    {
+                        open($fh, '>:raw', "frame.$fi.jpg") or die "write error";
+                        print $fh $buffer;
+                        close $fh;
+                        print "frame.$fi.jpg: $result bytes written\n";
+                    }
                     if(++$fi >= $fn)
                     {
                         exit;
                     }
                     break;
                 }
-                $count += $char;
+                $count .= $char;
             }
         }
     }
