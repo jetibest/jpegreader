@@ -164,4 +164,23 @@ Note that jpegreader uses /dev/video0 by default.
     });
     EOF
 
+If we would like to grab frame by frame, we could add the following Javascript code to the above example:
+
+    reader.kill('SIGCHLD');
+    console.log('jpegreader is currently paused, use commands: next, play, pause');
+    process.stdin.on('data', function(buf)
+    {
+        if(buf == 'play\n')
+        {
+            reader.kill('SIGCONT');
+        }
+        else if(buf == 'pause\n')
+        {
+            reader.kill('SIGCHLD');
+        }
+        else if(buf == 'next\n')
+        {
+            reader.kill('SIGUSR1');
+        }
+    });
 
