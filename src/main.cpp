@@ -1,5 +1,7 @@
 #include <iostream>
 #include <string>
+#include <mutex>
+#include <condition_variable>
 #include <csignal>
 #include <errno.h>
 #include <unistd.h>
@@ -22,15 +24,47 @@ static buffer* buffers = nullptr;
 static size_t n_buffers = 0;
 
 static bool running = true;
+static bool paused = false;
+static bool nextone = false;
+
+mutex mkey;
+condition_variable notif;
 
 static size_t width = 1920;
 static size_t height = 1080;
 static string devfile = "/dev/video0";
 
+static void usr1_handler(int sig)
+{
+	lock_guard<mutex> lk(mkey);
+	cerr << "SIGUSR1 received: " << sig << endl;
+	nextone = true;
+	notif.notify_one();
+}
+
+static void hold_handler(int sig)
+{
+	lock_guard<mutex> lk(mkey);
+	cerr << "SIGCHLD received: " << sig << endl;
+	paused = true;
+	nextone = false;
+	notif.notify_one();
+}
+
+static void cont_handler(int sig)
+{
+	lock_guard<mutex> lk(mkey);
+	cerr << "SIGCONT received: " << sig << endl;
+	paused = false;
+	notif.notify_one();
+}
+
 static void int_handler(int sig)
 {
+	lock_guard<mutex> lk(mkey);
 	cerr << "SIGINT received: " << sig << endl;
 	running = false;
+	notif.notify_one();
 }
 
 static void errno_exit(const char* s)
@@ -42,11 +76,11 @@ static void errno_exit(const char* s)
 static int do_ioctl(int fd, int request, void* argp)
 {
 	int r;
-	while(running)
+	while(true)
 	{
 		r = ioctl(fd, request, argp);
 		
-		if(errno != EINTR || r != -1)
+		if(errno != EINTR || r != -1 || !running)
 		{
 			return r;
 		}
@@ -54,67 +88,100 @@ static int do_ioctl(int fd, int request, void* argp)
 	return -1;
 }
 
+static int nextframe()
+{
+	fd_set fds;
+	FD_ZERO(&fds);
+	FD_SET(fd, &fds);
+	
+	struct timeval tv;
+	tv.tv_sec = 2;
+	tv.tv_usec = 0;
+	
+	int r = select(fd + 1, &fds, NULL, NULL, &tv);
+	if(r == -1)
+	{
+		if(errno == EINTR)
+		{
+			return 0;
+		}
+		errno_exit("select");
+	}
+	if(r == 0)
+	{
+		cerr << "select timeout" << endl;
+		exit(EXIT_FAILURE);
+	}
+
+	struct v4l2_buffer buf = {0};
+	buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	
+	if(do_ioctl(fd, VIDIOC_DQBUF, &buf) == -1)
+	{
+		if(errno == EAGAIN)
+		{
+			return 0;
+		}
+		else if(errno != EIO)
+		{
+			errno_exit("VIDIOC_DQBUF");
+		}
+	}
+	
+	if(buf.index < n_buffers)
+	{
+		unsigned char *b = static_cast<unsigned char*>(mmap(nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset));
+
+		if(buf.length > 3 && !(*(b+0) == 255 && *(b+1) == 216))
+		{
+			return 0;
+		}
+		
+		cerr << "buffer length: " << buf.length << endl;
+		cerr << "image length: " << buf.bytesused << endl;
+		// cerr << "pointer address: " << b << endl;
+
+		fprintf(stdout, "\x01%d\n", buf.length);
+		fwrite(b, 1, buf.length, stdout);
+		cout.flush();
+		
+		if(munmap(buffers[buf.index].start, buffers[buf.index].length) == -1)
+		{
+			errno_exit("munmap");
+		}
+		
+		if(do_ioctl(fd, VIDIOC_QBUF, &buf) == -1)
+		{
+			errno_exit("VIDIOC_QBUF");
+		}
+	}
+	else
+	{
+		return 0;
+	}
+	
+	return 1;
+}
+
 static void loop()
 {
 	while(running)
 	{
-		fd_set fds;
-		FD_ZERO(&fds);
-		FD_SET(fd, &fds);
-		
-		struct timeval tv;
-		tv.tv_sec = 2;
-		tv.tv_usec = 0;
-		
-		int r = select(fd + 1, &fds, NULL, NULL, &tv);
-		if(r == -1)
+		if(paused)
 		{
-			if(errno == EINTR)
-			{
-				continue;
-			}
-			errno_exit("select");
-		}
-		if(r == 0)
-		{
-			cerr << "select timeout" << endl;
-			exit(EXIT_FAILURE);
-		}
-		
-
-		struct v4l2_buffer buf = {0};
-		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-		buf.memory = V4L2_MEMORY_MMAP;
-		
-		if(do_ioctl(fd, VIDIOC_DQBUF, &buf) == -1)
-		{
-			if(errno == EAGAIN)
-			{
-				continue;
-			}
-			else if(errno != EIO)
-			{
-				errno_exit("VIDIOC_DQBUF");
-			}
-		}
-		
-		if(buf.index < n_buffers)
-		{
-			unsigned char *b = static_cast<unsigned char*>(mmap(nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset));
-			// cerr << "buffer length: " << buf.length << endl;
-			// cerr << "image length:" << buf.bytesused << endl;
-			// cerr << "pointer address: " << b << endl;
-			fprintf(stdout, "\x01%d\n", buf.length);
-			fwrite(b, 1, buf.length, stdout);
+			nextone = false;
 			
-			if(munmap(buffers[buf.index].start, buffers[buf.index].length) == -1)
+			unique_lock<mutex> lk(mkey);
+			notif.wait(lk, []{ return !running || !paused || nextone; });
+		}
+		
+		while(running)
+		{
+			lock_guard<mutex> lk(mkey);
+			if(nextframe() || (paused && !nextone))
 			{
-				errno_exit("munmap");
-			}
-			
-			if(do_ioctl(fd, VIDIOC_QBUF, &buf) == -1)
-			{
-				errno_exit("VIDIOC_QBUF");
+				break;
 			}
 		}
 	}
@@ -318,6 +385,9 @@ static void closedev()
 int main(int argc, char* argv[])
 {
 	signal(SIGINT, int_handler);
+	signal(SIGCHLD, hold_handler);
+	signal(SIGCONT, cont_handler);
+	signal(SIGUSR1, usr1_handler);
 	
 	if(argc == 2)
 	{
