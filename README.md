@@ -69,3 +69,99 @@ Note that jpegreader uses /dev/video0 by default.
     jpegreader | perl "$tmp"
     rm -f "$tmp"
 
+# NodeJS example
+
+Here we read four JPEG files using NodeJS ready to copy&paste in your shell.
+Note that jpegreader uses /dev/video0 by default.
+
+    node <<'EOF'
+    var readframe = (function()
+    {
+            var fs = require('fs');
+            var fi = 0;
+            var fn = 4;
+            var chr;
+            var bc;
+            var frame;
+            var mode = 0;
+    
+            return function()
+            {
+                    while(true)
+                    {
+                            if(mode === 0)
+                            {
+                                    while(true)
+                                    {
+                                            chr = reader.stdout.read(1);
+                                            if(chr === null)
+                                            {
+                                                    return;
+                                            }
+                                            else if(chr === '\x01')
+                                            {
+                                                    bc = '';
+                                                    mode = 1;
+                                                    break;
+                                            }
+                                    }
+                            }
+                            if(mode === 1)
+                            {
+                                    while(true)
+                                    {
+                                            chr = reader.stdout.read(1);
+                                            if(chr === null)
+                                            {
+                                                    return;
+                                            }
+                                            else if(chr === '\n')
+                                            {
+                                                    bc = parseInt(bc);
+                                                    if(bc)
+                                                    {
+                                                            mode = 2;
+                                                            break;
+                                                    }
+                                                    mode = 0;
+                                                    break;
+                                            }
+    
+                                            bc += chr;
+                                    }
+                            }
+                            if(mode === 2)
+                            {
+                                    frame = reader.stdout.read(bc);
+                                    if(frame === null)
+                                    {
+                                            return;
+                                    }
+                                    else
+                                    {
+                                            fs.writeFileSync('frame.' + fi + '.jpg', frame, {encoding: 'binary'});
+                                            console.log('frame.' + fi + '.jpg: ' + bc + ' bytes written');
+                                            if(++fi >= fn)
+                                            {
+                                                    reader.kill('SIGINT');
+                                                    reader.stdout.destroy();
+                                                    return;
+                                            }
+                                            mode = 0;
+                                            break;
+                                    }
+                            }
+                    }
+            };
+    })();
+    
+    var reader = require('child_process').spawn('jpegreader');
+    reader.stdout.setEncoding('binary');
+    reader.stdout.on('readable', readframe);
+    reader.on('exit', function(code)
+    {
+            console.log('jpegreader exited with code: ' + code);
+    });
+    EOF
+
+
