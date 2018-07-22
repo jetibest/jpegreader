@@ -421,6 +421,9 @@ int main(int argc, char* argv[])
 				"                        to stdout.\n"
 				"  --resolution,-r,-s    Set custom resolution. Default is 1920x1080.\n"
 				"  --device,-d,-i        Set custom V4L2 input device. Default is /dev/video0.\n"
+				"  --pause               Immediately pauses. Send SIGUSR1 to grab one frame at\n"
+				"                        a time. Unpause using SIGCONT, and pause again with\n"
+				"                        SIGCHLD."
 				"\n"
 				"The standard output contains a continuous stream of packets like:\n"
 				"  \\x01<frame-length>\\nJPEG_FRAMEDATA\\x01<frame-length>\\nJPEG_FRAMEDATA...\n"
@@ -465,6 +468,10 @@ int main(int argc, char* argv[])
 		else if(arg == "--header" || arg == "-h")
 		{
 			stderrmode = false;
+		}
+		else if(arg == "--pause")
+		{
+			paused = true;
 		}
 	}
 	
