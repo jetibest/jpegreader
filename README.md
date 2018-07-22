@@ -30,7 +30,7 @@ To parse individual JPEG frames is very simple:
 
 # Perl example
 
-Here we read four JPEG files using Bash and Perl ready to copy&paste in your shell.
+Here we write four JPEG files using Bash and Perl ready to copy&paste in your shell.
 Note that jpegreader uses /dev/video0 by default.
 
     tmp="$(mktemp)"
@@ -71,7 +71,7 @@ Note that jpegreader uses /dev/video0 by default.
 
 # NodeJS example
 
-Here we read four JPEG files using NodeJS ready to copy&paste in your shell.
+Here we write four JPEG files using NodeJS ready to copy&paste in your shell.
 Note that jpegreader uses /dev/video0 by default.
 
     node <<'EOF'
