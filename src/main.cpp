@@ -23,6 +23,8 @@ static int fd = -1;
 static buffer* buffers = nullptr;
 static size_t n_buffers = 0;
 
+static bool stderrmode = true;
+
 static bool running = true;
 static bool paused = false;
 static bool nextone = false;
@@ -138,13 +140,22 @@ static int nextframe()
 			return 0;
 		}
 		
-		cerr << "buffer length: " << buf.length << endl;
-		cerr << "image length: " << buf.bytesused << endl;
+		// cerr << "buffer length: " << buf.length << endl;
+		// cerr << "image length: " << buf.bytesused << endl;
 		// cerr << "pointer address: " << b << endl;
 
-		fprintf(stdout, "\x01%d\n", buf.length);
-		fwrite(b, 1, buf.length, stdout);
+		if(!stderrmode)
+		{
+			fprintf(stdout, "\x01%d\n", buf.bytesused);
+		}
+		
+		fwrite(b, 1, buf.bytesused, stdout);
 		cout.flush();
+		
+		if(stderrmode)
+		{
+			cerr << buf.bytesused << endl;
+		}
 		
 		if(munmap(buffers[buf.index].start, buffers[buf.index].length) == -1)
 		{
@@ -170,10 +181,13 @@ static void loop()
 	{
 		if(paused)
 		{
+			unique_lock<mutex> lk(mkey);
 			nextone = false;
 			
-			unique_lock<mutex> lk(mkey);
-			notif.wait(lk, []{ return !running || !paused || nextone; });
+			while(running && paused && !nextone)
+			{
+				notif.wait(lk);
+			}
 		}
 		
 		while(running)
@@ -404,7 +418,14 @@ int main(int argc, char* argv[])
 				"to separate the JPEG frames without any significant CPU usage.\n"
 				"\n"
 				"Example usage:\n"
-				"  jpegreader -s 1920x1080 -i /dev/video0 | use_jpeg_frames\n"
+				"  jpegreader -h -s 1280x720 -i /dev/video1 | use_jpeg_frames\n"
+				"\n"
+				"Options:\n"
+				"  --header,-h           Embed \\x01<frame-length>\\n header. Default behavior\n"
+				"                        prints frame lengths in stderr after frame is flushed\n"
+				"                        to stdout.\n"
+				"  --resolution,-r,-s    Set custom resolution. Default is 1920x1080.\n"
+				"  --device,-d,-i        Set custom V4L2 input device. Default is /dev/video0.\n"
 				"\n"
 				"The standard output contains a continuous stream of packets like:\n"
 				"  \\x01<frame-length>\\nJPEG_FRAMEDATA\\x01<frame-length>\\nJPEG_FRAMEDATA...\n"
@@ -445,6 +466,10 @@ int main(int argc, char* argv[])
 			string val(argv[i]);
 			
 			devfile = val;
+		}
+		else if(arg == "--header" || arg == "-h")
+		{
+			stderrmode = false;
 		}
 	}
 	
