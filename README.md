@@ -210,11 +210,15 @@ If we would like to grab frame by frame, we could use the following code instead
     reader.stdout.on('readable', tryreadframe);
     reader.stderr.on('data', function(buf)
     {
-        var length = parseInt(buf+'');
-        if(length)
+        buf = (''+buf).split('\n');
+        for(var i=0;i<buf.length;++i)
         {
-            queue.push(length);
-            tryreadframe();
+            var length = parseInt(buf[i]);
+            if(length)
+            {
+                queue.push(length);
+                tryreadframe();
+            }
         }
     });
     reader.on('exit', function(code)
