@@ -34,6 +34,7 @@ condition_variable notif;
 
 static size_t width = 1920;
 static size_t height = 1080;
+static bool customdev = false;
 static string devfile = "/dev/video0";
 
 static void usr1_handler(int sig)
@@ -84,6 +85,76 @@ static int do_ioctl(int fd, int request, void* argp)
 		}
 	}
 	return -1;
+}
+
+static int skipframe()
+{
+	fd_set fds;
+	FD_ZERO(&fds);
+	FD_SET(fd, &fds);
+	
+	struct timeval tv;
+	tv.tv_sec = 2;
+	tv.tv_usec = 0;
+	
+	int r = select(fd + 1, &fds, NULL, NULL, &tv);
+	if(r == -1)
+	{
+		if(errno == EINTR)
+		{
+			return 0;
+		}
+		errno_exit("select");
+	}
+	if(r == 0)
+	{
+		cerr << "select timeout" << endl;
+		exit(EXIT_FAILURE);
+	}
+	
+	struct v4l2_buffer buf = {0};
+	buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	
+	if(do_ioctl(fd, VIDIOC_DQBUF, &buf) == -1)
+	{
+		if(errno == EAGAIN)
+		{
+			return 0;
+		}
+		else if(errno != EIO)
+		{
+			errno_exit("VIDIOC_DQBUF");
+		}
+	}
+	
+	if(buf.index < n_buffers)
+	{
+		unsigned char *b = static_cast<unsigned char*>(mmap(nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset));
+		
+		if(buf.length > 3 && !(*(b+0) == 255 && *(b+1) == 216))
+		{
+			return 0;
+		}
+		
+		// no output, we skip the frame
+		
+		if(munmap(buffers[buf.index].start, buffers[buf.index].length) == -1)
+		{
+			errno_exit("munmap");
+		}
+		
+		if(do_ioctl(fd, VIDIOC_QBUF, &buf) == -1)
+		{
+			errno_exit("VIDIOC_QBUF");
+		}
+	}
+	else
+	{
+		return 0;
+	}
+	
+	return 1;
 }
 
 static int nextframe()
@@ -177,18 +248,25 @@ static void loop()
 	{
 		if(paused)
 		{
-			unique_lock<mutex> lk(mkey);
-			nextone = false;
-			
+			// unique_lock<mutex> lk(mkey);
 			while(running && paused && !nextone)
 			{
-				notif.wait(lk);
+				// notif.wait(lk);
+				skipframe();
 			}
 		}
 		
 		while(running)
 		{
-			if(nextframe() || (paused && !nextone))
+			if(nextframe())
+			{
+				if(paused)
+				{
+					nextone = false;
+					break;
+				}
+			}
+			else if(paused && !nextone)
 			{
 				break;
 			}
@@ -202,8 +280,39 @@ static void opendev()
 	struct stat st;
 	if(stat(devfile.c_str(), &st) == -1)
 	{
-		cerr << "cannot identify '" << devfile << "': " << errno << endl;
-		exit(EXIT_FAILURE);
+		if(customdev)
+		{
+			cerr << "cannot identify '" << devfile << "': " << errno << endl;
+			exit(EXIT_FAILURE);
+		}
+		else
+		{
+			cerr << "cannot identify '" << devfile << "': " << errno << ". trying next device..." << endl;
+			
+			bool deverror = true;
+			
+			// autodetect device, maybe it resides at /dev/video1 instead of /dev/video0
+			for(int i=1;i<10;++i)
+			{
+				if(stat((string("/dev/video") + to_string(i)).c_str(), &st) != -1)
+				{
+					deverror = false;
+					cerr << "device found: " << i << endl;
+					devfile = (string("/dev/video") + to_string(i)).c_str();
+					break;
+				}
+				else
+				{
+					cerr << "trying " << i << "..." << endl;
+				}
+			}
+			
+			if(deverror)
+			{
+				cerr << "not checking for more devices, giving up. error is true" << endl;
+				exit(EXIT_FAILURE);
+			}
+		}
 	}
 	
 	if(!S_ISCHR(st.st_mode))
@@ -463,6 +572,7 @@ int main(int argc, char* argv[])
 			++i;
 			string val(argv[i]);
 			
+			customdev = true;
 			devfile = val;
 		}
 		else if(arg == "--header" || arg == "-h")
