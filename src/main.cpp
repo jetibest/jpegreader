@@ -130,19 +130,20 @@ static int skipframe()
 	
 	if(buf.index < n_buffers)
 	{
-		unsigned char *b = static_cast<unsigned char*>(mmap(nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset));
+		// we don't need to do mmap and munmap, we can skip that too, for less CPU usage
+		//unsigned char *b = static_cast<unsigned char*>(mmap(nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset));
 		
-		if(buf.length > 3 && !(*(b+0) == 255 && *(b+1) == 216))
-		{
-			return 0;
-		}
+		//if(buf.length > 3 && !(*(b+0) == 255 && *(b+1) == 216))
+		//{
+		//	return 0;
+		//}
 		
 		// no output, we skip the frame
 		
-		if(munmap(buffers[buf.index].start, buffers[buf.index].length) == -1)
-		{
-			errno_exit("munmap");
-		}
+		//if(munmap(buffers[buf.index].start, buffers[buf.index].length) == -1)
+		//{
+		//	errno_exit("munmap");
+		//}
 		
 		if(do_ioctl(fd, VIDIOC_QBUF, &buf) == -1)
 		{
@@ -268,6 +269,8 @@ static void loop()
 			}
 			else if(paused && !nextone)
 			{
+				// nextframe failed, but we should pause anyway, and we're not waiting for a single nextframe
+				// so go to skipframe
 				break;
 			}
 		}
